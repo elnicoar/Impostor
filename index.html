@@ -2,13 +2,18 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Impostor Game</title>
   <style>
-    body {font-family: sans-serif; margin: 20px;}
-    input, button {margin: 5px;}
+    body {font-family: sans-serif; margin: 20px; font-size: 16px;}
+    input, button {margin: 5px; padding: 10px; font-size: 16px; width: 100%; box-sizing: border-box;}
     .hidden {display: none;}
-    table {border-collapse: collapse;}
-    td, th {border: 1px solid #ccc; padding: 8px;}
+    table {border-collapse: collapse; width: 100%;}
+    td, th {border: 1px solid #ccc; padding: 12px;}
+    @media (max-width: 600px) {
+      body {font-size: 14px;}
+      input, button {padding: 8px;}
+    }
   </style>
 </head>
 <body>
@@ -54,8 +59,171 @@
 
 <script>
   const urlParams = new URLSearchParams(window.location.search);
-  const gameId = urlParams.get('id');
-  const isOrganizer = !gameId;
+  const gameId = urlParams.get('id') || 'default'; // Use 'default' if no id
+  const isOrganizer = !urlParams.has('id');
+
+  // Credenciales organizador
+  const ORG_USER = "admin";
+  const ORG_PASS = "impostor2025";
+
+  let config = {players:0, impostors:0, word:"", slots:[], votes:{}};
+  const STORAGE_KEY = `impostor_game_${gameId}`;
+
+  function loadGame() {
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (data) config = JSON.parse(data);
+  }
+  function saveGame() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  }
+
+  if (isOrganizer) {
+    if (prompt("Usuario organizador:") !== ORG_USER || prompt("Contraseña:") !== ORG_PASS) {
+      alert("Acceso denegado"); location.href = "about:blank";
+    }
+    document.getElementById("setup").classList.remove("hidden");
+  } else {
+    loadGame();
+    if (!config.slots || config.slots.length === 0) { alert("Juego no encontrado o no iniciado"); location.href = "./"; }
+    document.getElementById("player").classList.remove("hidden");
+    initPlayerView();
+  }
+
+  function createGame() {
+    config.players = parseInt(document.getElementById("totalPlayers").value);
+    config.impostors = parseInt(document.getElementById("impostors").value);
+    config.word = document.getElementById("word").value.trim();
+    if (!config.word || config.impostors >= config.players) return alert("Datos inválidos");
+
+    config.slots = Array(config.players).fill(null).map(()=>({name:"", answer:"", role:"", joinTime: null}));
+    const impIdx = [];
+    while (impIdx.length < config.impostors) {
+      const r = Math.floor(Math.random()*config.players);
+      if (!impIdx.includes(r)) impIdx.push(r);
+    }
+    impIdx.forEach(i=>config.slots[i].role="impostor");
+    config.slots.forEach((s,i)=>{ if(!s.role) s.role=config.word; });
+
+    const id = Math.random().toString(36).substr(2,9);
+    const url = location.href.split('?')[0] + "?id=" + id;
+    config.link = url;
+
+    saveGame();
+    document.getElementById("setup").classList.add("hidden");
+    document.getElementById("organizer").classList.remove("hidden");
+    document.getElementById("gameLink").textContent = url;
+    updateOrganizer();
+    setInterval(updateOrganizer, 3000);
+    setInterval(checkTimeouts, 10000);
+  }
+
+  function copyLink() {
+    navigator.clipboard.writeText(config.link);
+  }
+
+  function initPlayerView() {
+    loadGame();
+    const sel = document.getElementById("slotSelect");
+    sel.innerHTML = "";
+    config.slots.forEach((s,i)=>{
+      if (!s.name) {
+        const opt = document.createElement("option");
+        opt.value = i; opt.textContent = "Slot "+(i+1);
+        sel.appendChild(opt);
+      }
+    });
+    if (sel.options.length === 0) alert("No slots disponibles");
+  }
+
+  function joinGame() {
+    loadGame();
+    const slot = parseInt(document.getElementById("slotSelect").value);
+    const name = document.getElementById("playerName").value.trim();
+    if (!name || isNaN(slot) || config.slots[slot].name) return alert("Inválido");
+    config.slots[slot].name = name;
+    config.slots[slot].joinTime = Date.now();
+    saveGame();
+    document.getElementById("player").classList.add("hidden");
+    document.getElementById("game").classList.remove("hidden");
+    document.getElementById("myName").textContent = name;
+    document.getElementById("roleText").textContent = config.slots[slot].role === "impostor" ? "Eres IMPOSTOR" : "Palabra: " + config.slots[slot].role;
+    localStorage.setItem(`mySlot_${gameId}`, slot);
+    updateVoteList();
+    setInterval(updateVoteList, 5000);
+  }
+
+  function submitAnswer() {
+    loadGame();
+    const slot = localStorage.getItem(`mySlot_${gameId}`);
+    const ans = document.getElementById("answer").value.trim();
+    if (!ans || isNaN(slot)) return;
+    config.slots[slot].answer = ans;
+    saveGame();
+    alert("Respuesta enviada");
+  }
+
+  function updateVoteList() {
+    loadGame();
+    const list = document.getElementById("voteList");
+    list.innerHTML = "";
+    config.slots.forEach((s,i)=>{
+      if (s.name && localStorage.getItem(`mySlot_${gameId}`) != i) {
+        const btn = document.createElement("button");
+        btn.textContent = s.name + (s.answer? " ("+s.answer+")":"");
+        btn.onclick = ()=>vote(i);
+        list.appendChild(btn);
+      }
+    });
+  }
+
+  function vote(target) {
+    loadGame();
+    const me = localStorage.getItem(`mySlot_${gameId}`);
+    config.votes[me] = target;
+    saveGame();
+    alert("Voto enviado");
+  }
+
+  function updateOrganizer() {
+    loadGame();
+    const table = document.getElementById("playersTable");
+    table.innerHTML = "<tr><th>Slot</th><th>Nombre</th><th>Respuesta</th></tr>";
+    config.slots.forEach((s,i)=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${i+1}</td><td>${s.name}</td><td>${s.answer}</td>`;
+      table.appendChild(tr);
+    });
+  }
+
+  function checkTimeouts() {
+    loadGame();
+    const now = Date.now();
+    config.slots.forEach((s,i)=>{
+      if (s.name && s.joinTime && now - s.joinTime > 60000 && !s.answer) {
+        s.name = ""; s.answer = ""; s.joinTime = null;
+      }
+    });
+    saveGame();
+  }
+
+  function reveal() {
+    loadGame();
+    const list = document.getElementById("revealList");
+    list.innerHTML = "";
+    config.slots.forEach((s,i)=>{
+      if (s.role === "impostor") {
+        const p = document.createElement("p");
+        p.textContent = `${s.name || "Slot "+(i+1)} era impostor`;
+        list.appendChild(p);
+      }
+    });
+  }
+
+  // Iniciar timer de slots
+  if (!isOrganizer) setInterval(initPlayerView, 5000);
+</script>
+</body>
+</html>  const isOrganizer = !gameId;
 
   // Credenciales organizador
   const ORG_USER = "admin";
